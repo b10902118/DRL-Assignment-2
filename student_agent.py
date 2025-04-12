@@ -44,7 +44,9 @@ class Game2048Env(gym.Env):
     def compress(self, row):
         """Compress the row: move non-zero values to the left"""
         new_row = row[row != 0]  # Remove zeros
-        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')  # Pad with zeros on the right
+        new_row = np.pad(
+            new_row, (0, self.size - len(new_row)), mode="constant"
+        )  # Pad with zeros on the right
         return new_row
 
     def merge(self, row):
@@ -121,13 +123,13 @@ class Game2048Env(gym.Env):
         # Check horizontally
         for i in range(self.size):
             for j in range(self.size - 1):
-                if self.board[i, j] == self.board[i, j+1]:
+                if self.board[i, j] == self.board[i, j + 1]:
                     return False
 
         # Check vertically
         for j in range(self.size):
             for i in range(self.size - 1):
-                if self.board[i, j] == self.board[i+1, j]:
+                if self.board[i, j] == self.board[i + 1, j]:
                     return False
 
         return True
@@ -172,12 +174,22 @@ class Game2048Env(gym.Env):
                 value = self.board[i, j]
                 color = COLOR_MAP.get(value, "#3c3a32")  # Default dark color
                 text_color = TEXT_COLOR.get(value, "white")
-                rect = plt.Rectangle((j - 0.5, i - 0.5), 1, 1, facecolor=color, edgecolor="black")
+                rect = plt.Rectangle(
+                    (j - 0.5, i - 0.5), 1, 1, facecolor=color, edgecolor="black"
+                )
                 ax.add_patch(rect)
 
                 if value != 0:
-                    ax.text(j, i, str(value), ha='center', va='center',
-                            fontsize=16, fontweight='bold', color=text_color)
+                    ax.text(
+                        j,
+                        i,
+                        str(value),
+                        ha="center",
+                        va="center",
+                        fontsize=16,
+                        fontweight="bold",
+                        color=text_color,
+                    )
         title = f"score: {self.score}"
         if action is not None:
             title += f" | action: {self.actions[action]}"
@@ -189,7 +201,7 @@ class Game2048Env(gym.Env):
         """Simulate a left move for a single row"""
         # Compress: move non-zero numbers to the left
         new_row = row[row != 0]
-        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
+        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode="constant")
         # Merge: merge adjacent equal numbers (do not update score)
         for i in range(len(new_row) - 1):
             if new_row[i] == new_row[i + 1] and new_row[i] != 0:
@@ -197,7 +209,7 @@ class Game2048Env(gym.Env):
                 new_row[i + 1] = 0
         # Compress again
         new_row = new_row[new_row != 0]
-        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode='constant')
+        new_row = np.pad(new_row, (0, self.size - len(new_row)), mode="constant")
         return new_row
 
     def is_move_legal(self, action):
@@ -231,10 +243,9 @@ class Game2048Env(gym.Env):
         # If the simulated board is different from the current board, the move is legal
         return not np.array_equal(self.board, temp_board)
 
+
 def get_action(state, score):
     env = Game2048Env()
-    return random.choice([0, 1, 2, 3]) # Choose a random action
-    
+    return random.choice([0, 1, 2, 3])  # Choose a random action
+
     # You can submit this random agent to evaluate the performance of a purely random strategy.
-
-
