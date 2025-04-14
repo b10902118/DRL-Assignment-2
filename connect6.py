@@ -13,12 +13,56 @@ EMPTY = 0
 BLACK = 1
 WHITE = 2
 
-DRDC = [(dr, dc) for dr in range(-1, 1) for dc in range(-1, 1) if dr != 0 or dc != 0]
+DRDC = [(dr, dc) for dr in range(-1, 2) for dc in range(-1, 2) if dr != 0 or dc != 0]
+DIRS = [(0, 1), (1, 0), (1, 1), (1, -1)]
 SIZE = 19
 
 
+def get_pattern_score(board, r, c):
+    max_score = 0
+    for dir in DIRS:
+        lengths = [0, 0]
+        offset = 1
+        colors = [0, 0]
+        score = 0
+        for d, s in enumerate([+1, -1]):
+            dr, dc = dir
+            dr, dc = dr * s, dc * s
+            for i in range(1, 5):
+                rr, cc = r + dr * i, c + dc * i
+                if rr < 0 or rr >= SIZE or cc < 0 or cc >= SIZE:
+                    break
+                if board[rr, cc] == 0:
+                    if colors[d] == 0:
+                        offset += 1
+                else:
+                    if colors[d] == 0:
+                        colors[d] = board[rr, cc]
+                        lengths[d] += 1
+                    elif board[rr, cc] == colors[d]:
+                        lengths[d] += 1
+                    else:
+                        break
+        if colors[0] == colors[1]:
+            if lengths[0] + offset >= 6 and lengths[0] > score:
+                score = lengths[0]
+            if lengths[1] + offset >= 6 and lengths[1] > score:
+                score = lengths[1]
+            if lengths[0] + lengths[1] + offset >= 6 and 6 - offset > score:
+                score = 6 - offset
+        else:
+            for d in [0, 1]:
+                if lengths[d] + offset >= 6:
+                    if lengths[d] > score:
+                        score = lengths[d]
+        score = min(4, score)
+        if score > max_score:
+            max_score = score
+    return max_score
+
+
 # TODO: prev possible version
-def get_possible_positions(board):
+def get_possible_positions(board, debug=False):
     nonempty_positions = [
         (r, c) for r in range(SIZE) for c in range(SIZE) if board[r, c] != 0
     ]
@@ -27,8 +71,14 @@ def get_possible_positions(board):
         for dr, dc in DRDC:
             r, c = np[0] + dr, np[1] + dc
             if 0 <= r < SIZE and 0 <= c < SIZE and board[r, c] == 0:
-                possible_positions.append((r, c))
-    return possible_positions
+                # possible_positions.append((r, c))
+                pattern_score = get_pattern_score(board, r, c)
+                possible_positions.append(((r, c), pattern_score))
+    # return possible_positions
+    possible_positions.sort(key=lambda x: x[1], reverse=True)
+    if debug:
+        print(possible_positions, file=sys.stderr)
+    return [p[0] for p in possible_positions[:10]]
 
 
 # TODO: last move version
@@ -67,15 +117,27 @@ def check_win(board):
     return 0
 
 
+def index_to_label(col):
+    """Converts column index to letter (skipping 'I')."""
+    return chr(ord("A") + col)  # + (1 if col >= 8 else 0))  # Skips 'I'
+
+
 def show_distribution(dist):
     """Displays the board as text."""
-    for r in reversed(range(SIZE)):
-        for c in range(SIZE):
-            if (r, c) in dist:
-                print(f"{dist[(r, c)]:.2f}", end=" ", file=sys.stderr)
-            else:
-                print("0.00", end=" ", file=sys.stderr)
-        print("\n", file=sys.stderr)
+    sorted_dist = sorted(dist.items(), key=lambda x: x[1], reverse=True)
+    # top_n = sorted_dist[:10]
+    for position, value in sorted_dist:
+        print(
+            f"{index_to_label(position[1])}{position[0]+1}: {value:.2f}",
+            file=sys.stderr,
+        )
+    # for r in reversed(range(SIZE)):
+    #    for c in range(SIZE):
+    #        if (r, c) in dist:
+    #            print(f"{dist[(r, c)]:.2f}", end=" ", file=sys.stderr)
+    #        else:
+    #            print("0.00", end=" ", file=sys.stderr)
+    #    print("\n", file=sys.stderr)
 
 
 class Turn:
@@ -86,10 +148,10 @@ class Turn:
 
     # prevent accidently modified by ref
     def next(self):
-        if self.n == 1:
-            return Turn(self.who, 2)
+        if self.n == 2:
+            return Turn(self.who, 1)
         else:
-            return Turn(3 - self.who, 1)
+            return Turn(3 - self.who, 2)
 
 
 # UCT Node for MCTS
@@ -120,6 +182,7 @@ class UCTMCTS:
         self.c = exploration_constant  # Balances exploration and exploitation
 
     def select_child(self, node):
+        # must be fully expanded
         # TODO: Use the UCT formula: Q + c * sqrt(log(parent_visits)/child_visits) to select the child
         if len(node.untried_actions) != 0:
             return node.children[node.untried_actions[0]]
@@ -138,7 +201,7 @@ class UCTMCTS:
 
     def rollout(self, board, turn: Turn):
         # TODO: Perform a random rollout from the current state up to the specified depth.
-        print("rollout start", file=sys.stderr)
+        # print("rollout start", file=sys.stderr)
         winner = check_win(board)
         # cnt = 0
         while True:
@@ -155,6 +218,7 @@ class UCTMCTS:
                 # print("legal_moves", legal_moves, file=sys.stderr)
                 if len(legal_moves) == 0:
                     print("rollout: no possible action", file=sys.stderr)
+                    print(board, file=sys.stderr)
                     return 0
                 # if len(legal_moves) == 0:
                 #    break
@@ -167,7 +231,11 @@ class UCTMCTS:
         # TODO: Propagate the reward up the tree, updating visit counts and total rewards.
         while node is not None:
             node.visits += 1
-            node.total_reward += 1 if node.turn.who == winner else -1
+            if node.turn.who == winner:
+                node.total_reward += 1
+            elif node.turn.who != 0:
+                node.total_reward -= 1
+            # == 0 add 0
             node = node.parent
 
     # don't feed empty board
@@ -195,8 +263,7 @@ class UCTMCTS:
         # Rollout: Simulate a random game from the expanded node.
         winner = self.rollout(board, node.turn)
         # Backpropagation: Update the tree with the rollout reward.
-        if winner != 0:  # not draw
-            self.backpropagate(node, winner)
+        self.backpropagate(node, winner)
 
     def best_action_distribution(self, root):
         """
@@ -326,6 +393,13 @@ class Connect6Game:
 
     def generate_move(self, color):
         """Generates a random move for the computer."""
+        if color == "B":
+            colorn = BLACK
+        else:
+            colorn = WHITE
+
+        # print(get_possible_positions(self.board, debug=True), file=sys.stderr)
+
         if self.game_over:
             print("? Game over")
             return
@@ -336,17 +410,19 @@ class Connect6Game:
         else:
             # TODO: MCTS
             print("MCTS", file=sys.stderr)
-            selected = random.sample(get_possible_positions(self.board), 1)
-            # uct_mcts = UCTMCTS()
-            # turn = Turn(self.turn, 1)
-            # root = UCTNode(self.board, turn)  # Initialize the root node for MCTS
-            # for i in tqdm(range(1000)):
-            #    uct_mcts.run(root)
-            ## print(root.children.keys(), file=sys.stderr)
-            # best_action, dist = uct_mcts.best_action_distribution(root)
-            # show_distribution(dist)
-            # print(best_action, file=sys.stderr)
-            # selected = [best_action]
+            # selected = random.sample(get_possible_positions(self.board), 1)
+            uct_mcts = UCTMCTS()
+            # print(self.turn, file=sys.stderr)
+            turn = Turn(colorn, self.turn)
+            root = UCTNode(self.board, turn)  # Initialize the root node for MCTS
+            for i in tqdm(range(1000)):
+                uct_mcts.run(root)
+            # print(root.children.keys(), file=sys.stderr)
+            best_action, dist = uct_mcts.best_action_distribution(root)
+            print(self.board, file=sys.stderr)
+            show_distribution(dist)
+            print(best_action, file=sys.stderr)
+            selected = [best_action]
 
         move_str = ",".join(f"{self.index_to_label(c)}{r+1}" for r, c in selected)
 
@@ -379,6 +455,7 @@ class Connect6Game:
 
     def process_command(self, command):
         """Parses and executes GTP commands."""
+        print(command, file=sys.stderr)
         command = command.strip()
         if command == "get_conf_str env_board_size:":
             print("env_board_size=19", flush=True)
@@ -433,5 +510,11 @@ class Connect6Game:
 
 
 if __name__ == "__main__":
-    game = Connect6Game()
-    game.run()
+    try:
+        game = Connect6Game()
+        game.run()
+    except Exception as e:
+        import traceback
+
+        print(e, file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)

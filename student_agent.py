@@ -151,12 +151,14 @@ class Game2048Env(gym.Env):
 
         self.last_move_valid = moved  # Record if the move was valid
 
+        afterstate = self.board.copy()
+
         if moved:
             self.add_random_tile()
 
         done = self.is_game_over()
 
-        return self.board, self.score, done, {}
+        return self.board.copy(), self.score, done, afterstate
 
     def render(self, mode="human", action=None):
         """
@@ -244,8 +246,79 @@ class Game2048Env(gym.Env):
         return not np.array_equal(self.board, temp_board)
 
 
-def get_action(state, score):
-    env = Game2048Env()
-    return random.choice([0, 1, 2, 3])  # Choose a random action
+WEIGHT_SIZE = 0xFFFFFF + 1
+FN = 64
+# fmt: off
+patterns = [
+    [0, 1, 2, 4, 5, 6],    [12, 8, 4, 13, 9, 5],   [15, 14, 13, 11, 10, 9],  [3, 7, 11, 2, 6, 10],
+    [3, 2, 1, 7, 6, 5],    [15, 11, 7, 14, 10, 6], [12, 13, 14, 8, 9, 10],   [0, 4, 8, 1, 5, 9],
+    [1, 2, 5, 6, 9, 13],   [8, 4, 9, 5, 10, 11],   [14, 13, 10, 9, 6, 2],    [7, 11, 6, 10, 5, 4],
+    [2, 1, 6, 5, 10, 14],  [11, 7, 10, 6, 9, 8],   [13, 14, 9, 10, 5, 1],    [4, 8, 5, 9, 6, 7],
+    [0, 1, 2, 3, 4, 5],    [12, 8, 4, 0, 13, 9],   [15, 14, 13, 12, 11, 10], [3, 7, 11, 15, 2, 6],
+    [3, 2, 1, 0, 7, 6],    [15, 11, 7, 3, 14, 10], [12, 13, 14, 15, 8, 9],   [0, 4, 8, 12, 1, 5],
+    [0, 1, 5, 6, 7, 10],   [12, 8, 9, 5, 1, 6],    [15, 14, 10, 9, 8, 5],    [3, 7, 6, 10, 14, 9],
+    [3, 2, 6, 5, 4, 9],    [15, 11, 10, 6, 2, 5],  [12, 13, 9, 10, 11, 6],   [0, 4, 5, 9, 13, 10],
+    [0, 1, 2, 5, 9, 10],   [12, 8, 4, 9, 10, 6],   [15, 14, 13, 10, 6, 5],   [3, 7, 11, 6, 5, 9],
+    [3, 2, 1, 6, 10, 9],   [15, 11, 7, 10, 9, 5],  [12, 13, 14, 9, 5, 6],    [0, 4, 8, 5, 6, 10],
+    [0, 1, 5, 9, 13, 14],  [12, 8, 9, 10, 11, 7],  [15, 14, 10, 6, 2, 1],    [3, 7, 6, 5, 4, 8],
+    [3, 2, 6, 10, 14, 13], [15, 11, 10, 9, 8, 4],  [12, 13, 9, 5, 1, 2],     [0, 4, 5, 6, 7, 11],
+    [0, 1, 5, 8, 9, 13],   [12, 8, 9, 14, 10, 11], [15, 14, 10, 7, 6, 2],    [3, 7, 6, 1, 5, 4],
+    [3, 2, 6, 11, 10, 14], [15, 11, 10, 13, 9, 8], [12, 13, 9, 4, 5, 1],     [0, 4, 5, 2, 6, 7],
+    [0, 1, 2, 4, 6, 10],   [12, 8, 4, 13, 5, 6],   [15, 14, 13, 11, 9, 5],   [3, 7, 11, 2, 10, 9],
+    [3, 2, 1, 7, 5, 9],    [15, 11, 7, 14, 6, 5],  [12, 13, 14, 8, 10, 6],   [0, 4, 8, 1, 9, 10],
+]
+# fmt: on
 
-    # You can submit this random agent to evaluate the performance of a purely random strategy.
+weights = []
+
+LOG2 = {2**i: i for i in range(1, 16)}
+LOG2[0] = 0
+
+with open("weight.bin", "rb") as f:
+    data = f.read()
+    for i in range(FN):
+        weights.append(
+            np.frombuffer(
+                data[i * (4 * WEIGHT_SIZE) : (i + 1) * (4 * WEIGHT_SIZE)], np.float32
+            )
+        )
+        assert len(weights[i]) == WEIGHT_SIZE, f"Weight {i} size mismatch."
+
+
+def get_feature(board, pattern):
+    feature = 0
+    for order in pattern:
+        feature <<= 4
+        feature |= LOG2[board[order // 4, order % 4]]
+    return feature
+
+
+def value(state):
+    value = 0
+    for weight, pattern in zip(weights, patterns):
+        feature = get_feature(state, pattern)
+        assert feature < WEIGHT_SIZE
+        value += weight[feature]
+    return value
+
+
+def get_action(state, score):
+    # print(state)
+    # print(score)
+    best_action = None
+    best_value = -float("inf")
+    env = Game2048Env()
+    env.board = state
+    # legal_actions = [a for a in range(4) if env.is_move_legal(a)]
+    # print(legal_actions)
+    for action in range(4):
+        env.board = state.copy()
+        if env.is_move_legal(action):
+            _, reward, _, afterstate = env.step(action)
+            v = reward + value(afterstate)
+            if v > best_value:
+                best_value = v
+                best_action = action
+    # assert best_action != None
+    # print(best_action)
+    return best_action
