@@ -22,7 +22,8 @@ def get_pattern_score(board, r, c):
     max_score = 0
     for dir in DIRS:
         lengths = [0, 0]
-        offset = 1
+        c_offset = 1
+        offset = [0, 0]
         colors = [0, 0]
         score = 0
         for d, s in enumerate([+1, -1]):
@@ -34,7 +35,9 @@ def get_pattern_score(board, r, c):
                     break
                 if board[rr, cc] == 0:
                     if colors[d] == 0:
-                        offset += 1
+                        c_offset += 1
+                    else:
+                        offset[d] += 1
                 else:
                     if colors[d] == 0:
                         colors[d] = board[rr, cc]
@@ -44,18 +47,27 @@ def get_pattern_score(board, r, c):
                     else:
                         break
         if colors[0] == colors[1]:
-            if lengths[0] + offset >= 6 and lengths[0] > score:
+            # length <= 3 here
+            if lengths[0] + c_offset + offset[0] >= 6 and lengths[0] > score:
                 score = lengths[0]
-            if lengths[1] + offset >= 6 and lengths[1] > score:
+            if lengths[1] + c_offset + offset[1] >= 6 and lengths[1] > score:
                 score = lengths[1]
-            if lengths[0] + lengths[1] + offset >= 6 and 6 - offset > score:
-                score = 6 - offset
+            # length > 3 here
+            if (
+                lengths[0] + lengths[1] + c_offset + sum(offset) >= 6
+                and 6 - c_offset > score
+            ):
+                score = min(6 - c_offset, lengths[0] + lengths[1])
         else:
             for d in [0, 1]:
-                if lengths[d] + offset >= 6:
+                if lengths[d] + c_offset >= 6:
                     if lengths[d] > score:
                         score = lengths[d]
         score = min(4, score)
+        # print(
+        #    f"dir: {dir}, lengths: {lengths}, colors: {colors}, offset: {offset}, score: {score}",
+        #    file=sys.stderr,
+        # )
         if score > max_score:
             max_score = score
     return max_score
@@ -66,15 +78,17 @@ def get_possible_positions(board, debug=False):
     nonempty_positions = [
         (r, c) for r in range(SIZE) for c in range(SIZE) if board[r, c] != 0
     ]
-    possible_positions = []
+    possible_positions = set()
     for np in nonempty_positions:
         for dr, dc in DRDC:
             r, c = np[0] + dr, np[1] + dc
             if 0 <= r < SIZE and 0 <= c < SIZE and board[r, c] == 0:
                 # possible_positions.append((r, c))
+                # print(f"possible position: {r}, {c}", file=sys.stderr)
                 pattern_score = get_pattern_score(board, r, c)
-                possible_positions.append(((r, c), pattern_score))
+                possible_positions.add(((r, c), pattern_score))
     # return possible_positions
+    possible_positions = list(possible_positions)
     possible_positions.sort(key=lambda x: x[1], reverse=True)
     if debug:
         print(possible_positions, file=sys.stderr)
@@ -222,7 +236,7 @@ class UCTMCTS:
                     return 0
                 # if len(legal_moves) == 0:
                 #    break
-                action = random.choice(legal_moves)
+                action = legal_moves[0]
                 board[action[0], action[1]] = turn.who
                 turn = turn.next()
                 winner = check_win(board)
@@ -252,7 +266,7 @@ class UCTMCTS:
 
         # TODO: Expansion: if the node has untried actions, expand one.
         if len(node.untried_actions) != 0:
-            action = random.choice(node.untried_actions)
+            action = node.untried_actions[0]
             node.untried_actions.remove(action)
             board[action[0], action[1]] = node.turn.who
             expanded_node = UCTNode(board.copy(), node.turn.next())
@@ -398,7 +412,7 @@ class Connect6Game:
         else:
             colorn = WHITE
 
-        # print(get_possible_positions(self.board, debug=True), file=sys.stderr)
+        print(get_possible_positions(self.board, debug=True), file=sys.stderr)
 
         if self.game_over:
             print("? Game over")
@@ -408,14 +422,13 @@ class Connect6Game:
             print("first move", file=sys.stderr)
             selected = [(SIZE // 2, SIZE // 2)]
         else:
-            # TODO: MCTS
             print("MCTS", file=sys.stderr)
-            # selected = random.sample(get_possible_positions(self.board), 1)
+            # # selected = random.sample(get_possible_positions(self.board), 1)
             uct_mcts = UCTMCTS()
-            # print(self.turn, file=sys.stderr)
+            print(self.turn, file=sys.stderr)
             turn = Turn(colorn, self.turn)
-            root = UCTNode(self.board, turn)  # Initialize the root node for MCTS
-            for i in tqdm(range(1000)):
+            root = UCTNode(self.board.copy(), turn)  # Initialize the root node for MCTS
+            for i in tqdm(range(100)):
                 uct_mcts.run(root)
             # print(root.children.keys(), file=sys.stderr)
             best_action, dist = uct_mcts.best_action_distribution(root)
@@ -423,6 +436,7 @@ class Connect6Game:
             show_distribution(dist)
             print(best_action, file=sys.stderr)
             selected = [best_action]
+            # selected = [get_possible_positions(self.board)[0]]
 
         move_str = ",".join(f"{self.index_to_label(c)}{r+1}" for r, c in selected)
 
@@ -518,3 +532,11 @@ if __name__ == "__main__":
 
         print(e, file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
+"""
+board = np.zeros((SIZE, SIZE), dtype=int)  # 0: Empty, 1: Black, 2: White
+board[10, 9] = 1
+board[10, 11] = 1
+board[10, 12] = 1
+board[10, 13] = 1
+print(get_possible_positions(board, debug=True))
+"""
