@@ -18,8 +18,23 @@ DIRS = [(0, 1), (1, 0), (1, 1), (1, -1)]
 SIZE = 19
 
 
-def get_pattern_score(board, r, c):
+class Turn:
+    def __init__(self, who, n):
+        assert n == 1 or n == 2, "n must be 1 or 2"
+        self.who = who
+        self.n = n
+
+    # prevent accidently modified by ref
+    def next(self):
+        if self.n == 2:
+            return Turn(self.who, 1)
+        else:
+            return Turn(3 - self.who, 2)
+
+
+def get_pattern_score(board, turn: Turn, r, c):
     max_score = 0
+    target_color = 0
     for dir in DIRS:
         lengths = [0, 0]
         c_offset = 1
@@ -29,7 +44,7 @@ def get_pattern_score(board, r, c):
         for d, s in enumerate([+1, -1]):
             dr, dc = dir
             dr, dc = dr * s, dc * s
-            for i in range(1, 5):
+            for i in range(1, 6):
                 rr, cc = r + dr * i, c + dc * i
                 if rr < 0 or rr >= SIZE or cc < 0 or cc >= SIZE:
                     break
@@ -50,85 +65,120 @@ def get_pattern_score(board, r, c):
             # length <= 3 here
             if lengths[0] + c_offset + offset[0] >= 6 and lengths[0] > score:
                 score = lengths[0]
+                local_target_color = colors[0]
             if lengths[1] + c_offset + offset[1] >= 6 and lengths[1] > score:
                 score = lengths[1]
+                local_target_color = colors[0]
             # length > 3 here
             if (
                 lengths[0] + lengths[1] + c_offset + sum(offset) >= 6
                 and 6 - c_offset > score
             ):
                 score = min(6 - c_offset, lengths[0] + lengths[1])
+                local_target_color = colors[0]
         else:
             for d in [0, 1]:
                 if lengths[d] + c_offset >= 6:
                     if lengths[d] > score:
                         score = lengths[d]
-        score = min(4, score)
+                        local_target_color = colors[d]
+        score = min(5, score)
         # print(
         #    f"dir: {dir}, lengths: {lengths}, colors: {colors}, offset: {offset}, score: {score}",
         #    file=sys.stderr,
         # )
-        if score > max_score:
+        if score > max_score:  # must pass at least one update
             max_score = score
+            target_color = local_target_color
+
+    if max_score < 4 and target_color == turn.who:
+        max_score += 0.5  # encourage attack
+    elif max_score == 4 and target_color == turn.who:
+        if turn.n == 2:
+            max_score += 1.5
+        else:
+            max_score -= 0.1
+    elif max_score == 5 and target_color == turn.who:
+        max_score += 1
     return max_score
 
 
 # TODO: prev possible version
-def get_possible_positions(board, debug=False):
+def get_possible_positions(board, turn: Turn, debug=False):
     nonempty_positions = [
         (r, c) for r in range(SIZE) for c in range(SIZE) if board[r, c] != 0
     ]
     possible_positions = set()
+    pos_score_list = []
     for np in nonempty_positions:
         for dr, dc in DRDC:
             r, c = np[0] + dr, np[1] + dc
             if 0 <= r < SIZE and 0 <= c < SIZE and board[r, c] == 0:
-                # possible_positions.append((r, c))
-                # print(f"possible position: {r}, {c}", file=sys.stderr)
-                pattern_score = get_pattern_score(board, r, c)
-                possible_positions.add(((r, c), pattern_score))
+                if (r, c) not in possible_positions:
+                    possible_positions.add((r, c))
+                    pattern_score = get_pattern_score(board, turn, r, c)
+                    pos_score_list.append(((r, c), pattern_score))
     # return possible_positions
-    possible_positions = list(possible_positions)
-    possible_positions.sort(key=lambda x: x[1], reverse=True)
+    pos_score_list.sort(key=lambda x: x[1], reverse=True)
     if debug:
-        print(possible_positions, file=sys.stderr)
-    return [p[0] for p in possible_positions[:10]]
+        pass
+        # print(pos_score_list[:10], file=sys.stderr)
+    return [p[0] for p in pos_score_list[:10]]
 
 
 # TODO: last move version
-def check_win(board):
+def check_win(board, last_moves=[]):
     """Checks if a player has won.
     Returns:
     0 - No winner yet
     1 - Black wins
     2 - White wins
     """
-    directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
-    for r in range(SIZE):
-        for c in range(SIZE):
+    if last_moves:
+        for r, c in reversed(last_moves):
             if board[r, c] != 0:
                 current_color = board[r, c]
-                for dr, dc in directions:
-                    prev_r, prev_c = r - dr, c - dc
-                    if (
-                        0 <= prev_r < SIZE
-                        and 0 <= prev_c < SIZE
-                        and board[prev_r, prev_c] == current_color
-                    ):
-                        continue
-                    count = 0
-                    rr, cc = r, c
-                    while (
-                        0 <= rr < SIZE
-                        and 0 <= cc < SIZE
-                        and board[rr, cc] == current_color
-                    ):
-                        count += 1
-                        rr += dr
-                        cc += dc
+                for dr, dc in DIRS:
+                    count = 1
+                    for s in (-1, 1):
+                        rr, cc = r + s * dr, c + s * dc
+                        while (
+                            0 <= rr < SIZE
+                            and 0 <= cc < SIZE
+                            and board[rr, cc] == current_color
+                        ):
+                            count += 1
+                            rr += s * dr
+                            cc += s * dc
                     if count >= 6:
                         return current_color
-    return 0
+        return 0
+    else:
+        for r in range(SIZE):
+            for c in range(SIZE):
+                if board[r, c] != 0:
+                    current_color = board[r, c]
+                    for dr, dc in DIRS:
+                        prev_r, prev_c = r - dr, c - dc
+                        if (
+                            0 <= prev_r < SIZE
+                            and 0 <= prev_c < SIZE
+                            and board[prev_r, prev_c] == current_color
+                        ):
+                            continue
+                        count = 0
+                        rr, cc = r, c
+                        while (
+                            0 <= rr < SIZE
+                            and 0 <= cc < SIZE
+                            and board[rr, cc] == current_color
+                        ):
+                            count += 1
+                            rr += dr
+                            cc += dc
+                        if count >= 6:
+                            return current_color
+        return 0
 
 
 def index_to_label(col):
@@ -154,20 +204,6 @@ def show_distribution(dist):
     #    print("\n", file=sys.stderr)
 
 
-class Turn:
-    def __init__(self, who, n):
-        assert n == 1 or n == 2, "n must be 1 or 2"
-        self.who = who
-        self.n = n
-
-    # prevent accidently modified by ref
-    def next(self):
-        if self.n == 2:
-            return Turn(self.who, 1)
-        else:
-            return Turn(3 - self.who, 2)
-
-
 # UCT Node for MCTS
 class UCTNode:
     def __init__(self, board, turn):
@@ -183,7 +219,9 @@ class UCTNode:
         self.parent = None
         self.visits = 0
         self.total_reward = 0.0
-        self.untried_actions = get_possible_positions(board)  # List of untried actions
+        self.untried_actions = get_possible_positions(
+            board, turn
+        )  # List of untried actions
 
     def fully_expanded(self):
         # A node is fully expanded if no legal actions remain untried.
@@ -217,29 +255,27 @@ class UCTMCTS:
         # TODO: Perform a random rollout from the current state up to the specified depth.
         # print("rollout start", file=sys.stderr)
         winner = check_win(board)
-        # cnt = 0
         while True:
-            # cnt += 1
             # print(f"turn {cnt}", file=sys.stderr)
             # if cnt > 200:
             #    print(board, file=sys.stderr)
             #    exit(0)
-            for _ in range(2):
-                if winner != 0:
-                    # print("rollout done", file=sys.stderr)
-                    return winner
-                legal_moves = get_possible_positions(board)
-                # print("legal_moves", legal_moves, file=sys.stderr)
-                if len(legal_moves) == 0:
-                    print("rollout: no possible action", file=sys.stderr)
-                    print(board, file=sys.stderr)
-                    return 0
-                # if len(legal_moves) == 0:
-                #    break
-                action = legal_moves[0]
-                board[action[0], action[1]] = turn.who
-                turn = turn.next()
-                winner = check_win(board)
+            if winner != 0:
+                # print("rollout done", file=sys.stderr)
+                # print("=" * 80, file=sys.stderr)
+                return winner
+            legal_moves = get_possible_positions(board, turn)
+            # print("legal_moves", legal_moves, file=sys.stderr)
+            if len(legal_moves) == 0:
+                # print("rollout: no possible action", file=sys.stderr)
+                # print(board, file=sys.stderr)
+                return 0
+            # if len(legal_moves) == 0:
+            #    break
+            action = legal_moves[0]
+            board[action[0], action[1]] = turn.who
+            turn = turn.next()
+            winner = check_win(board, last_moves=[action])
 
     def backpropagate(self, node, winner):
         # TODO: Propagate the reward up the tree, updating visit counts and total rewards.
@@ -408,33 +444,34 @@ class Connect6Game:
     def generate_move(self, color):
         """Generates a random move for the computer."""
         if color == "B":
-            colorn = BLACK
+            mycolor = BLACK
         else:
-            colorn = WHITE
+            mycolor = WHITE
 
-        print(get_possible_positions(self.board, debug=True), file=sys.stderr)
+        # print(get_possible_positions(self.board, color, debug=True), file=sys.stderr)
 
         if self.game_over:
             print("? Game over")
             return
 
         if np.all(self.board == 0):
-            print("first move", file=sys.stderr)
+            # print("first move", file=sys.stderr)
             selected = [(SIZE // 2, SIZE // 2)]
         else:
-            print("MCTS", file=sys.stderr)
+            # print("MCTS", file=sys.stderr)
             # # selected = random.sample(get_possible_positions(self.board), 1)
             uct_mcts = UCTMCTS()
-            print(self.turn, file=sys.stderr)
-            turn = Turn(colorn, self.turn)
-            root = UCTNode(self.board.copy(), turn)  # Initialize the root node for MCTS
-            for i in tqdm(range(100)):
+            # print("Black" if mycolor == BLACK else WHITE, self.turn, file=sys.stderr)
+            # print(self.board, file=sys.stderr)
+            myturn = Turn(mycolor, self.turn)
+            root = UCTNode(
+                self.board.copy(), myturn
+            )  # Initialize the root node for MCTS
+            for i in range(5):
                 uct_mcts.run(root)
             # print(root.children.keys(), file=sys.stderr)
             best_action, dist = uct_mcts.best_action_distribution(root)
-            print(self.board, file=sys.stderr)
-            show_distribution(dist)
-            print(best_action, file=sys.stderr)
+            # show_distribution(dist)
             selected = [best_action]
             # selected = [get_possible_positions(self.board)[0]]
 
@@ -443,7 +480,7 @@ class Connect6Game:
         self.play_move(color, move_str)
 
         print(f"{move_str}\n\n", end="", flush=True)
-        print(move_str, file=sys.stderr)
+        # print(move_str, file=sys.stderr)
         return
 
     def show_board(self):
@@ -469,7 +506,7 @@ class Connect6Game:
 
     def process_command(self, command):
         """Parses and executes GTP commands."""
-        print(command, file=sys.stderr)
+        # print(command, file=sys.stderr)
         command = command.strip()
         if command == "get_conf_str env_board_size:":
             print("env_board_size=19", flush=True)
